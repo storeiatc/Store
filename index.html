@@ -177,6 +177,7 @@ tbody tr:hover{background:var(--bg3);}
     <button class="btn" onclick="loadFromSheets()" title="Refresh from Google Sheets">🔄 Refresh</button>
     <button class="btn btn-p" onclick="openModal('addItemModal')">+ Add Item</button>
     <button class="btn" onclick="exportBackup()" title="Export daily backup">💾 Backup</button>
+    <button class="btn" onclick="exportToSheets()" title="Export to Google Sheets">📊 Export to Sheets</button>
     <button class="btn" onclick="document.getElementById('importFile').click()" title="Restore from backup">📂 Restore</button>
     <input type="file" id="importFile" accept=".json" style="display:none" onchange="importBackup(event)">
     <button class="btn" onclick="document.getElementById('importItemsFile').click()" title="Import items from CSV/Excel">📥 Import Items</button>
@@ -1138,7 +1139,55 @@ function splitCSV(line) {
 }
 
 // ═══ BACKUP & RESTORE ═══
-function exportBackup() {
+async function exportToSheets() {
+  if (!confirm('Export all ' + storeDB.length + ' items to Google Sheets?\nThis may take a few minutes.')) return;
+  showToast('⏳ Exporting to Sheets...');
+  const tools = storeDB.filter(i => i.type === 'Tool');
+  const consumables = storeDB.filter(i => i.type === 'Consumable');
+  const BATCH_SIZE = 500;
+  let success = true;
+  for (let i = 0; i < tools.length; i += BATCH_SIZE) {
+    const batch = tools.slice(i, i + BATCH_SIZE);
+    try {
+      const res = await fetch(SCRIPT_URL, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'exportTools', tools: batch, batch: Math.floor(i/BATCH_SIZE) }),
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const data = await res.json();
+      if (!data.ok) { success = false; break; }
+      showToast('⏳ Tools: ' + Math.min(i+BATCH_SIZE, tools.length) + '/' + tools.length);
+    } catch(e) { success = false; break; }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  if (success && consumables.length) {
+    const consMap = {};
+    consumables.forEach(c => {
+      if (!consMap[c.pn]) consMap[c.pn] = { pn: c.pn, desc: c.desc, qty: 0 };
+      consMap[c.pn].qty++;
+    });
+    const consList = Object.values(consMap);
+    for (let i = 0; i < consList.length; i += BATCH_SIZE) {
+      const batch = consList.slice(i, i + BATCH_SIZE);
+      try {
+        const res = await fetch(SCRIPT_URL, {
+          method: 'POST',
+          body: JSON.stringify({ action: 'exportConsumables', consumables: batch, batch: Math.floor(i/BATCH_SIZE) }),
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        if (!data.ok) { success = false; break; }
+      } catch(e) { success = false; break; }
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  if (success) {
+    alert('✅ Export Complete!\nTools: ' + tools.length + '\nConsumables: ' + consumables.length);
+  } else {
+    showToast('❌ Export failed - try again');
+  }
+}
+  function exportBackup() {
   const backup = {
     exportDate: new Date().toISOString(),
     exportDateReadable: new Date().toLocaleString('en-GB'),
