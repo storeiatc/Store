@@ -255,6 +255,11 @@ tbody tr:hover{background:var(--bg3);}
       <div class="frow">
         <label class="flabel">Notes</label>
         <input class="finput" id="qi_notes" placeholder="Optional...">
+        </div>
+<div class="frow" id="qi_qtyRow" style="display:none">
+  <label class="flabel">Quantity *</label>
+  <input class="finput" type="number" id="qi_qty" value="1" min="1">
+</div>
       </div>
     </div>
     <div style="display:flex;gap:8px;margin-top:4px;">
@@ -718,6 +723,7 @@ function openQuickIssue(track) {
   // show qty field for consumables only
   document.getElementById('qtyRow').style.display = item.type === 'Consumable' ? 'block' : 'none';
   panel.style.display='block';
+  document.getElementById('qi_qtyRow').style.display = item.type === 'Consumable' ? 'block' : 'none';
   document.getElementById('qi_to').focus();
   panel.scrollIntoView({behavior:'smooth'});
 }
