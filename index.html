@@ -334,6 +334,10 @@ tbody tr:hover{background:var(--bg3);}
       <label class="flabel">Notes</label>
       <input class="finput" id="m_notes" placeholder="Optional notes...">
     </div>
+    <div class="frow" id="qtyRow" style="display:none">
+      <label class="flabel">Quantity *</label>
+      <input class="finput" type="number" id="m_qty" value="1" min="1">
+    </div>
     <div class="mactions">
       <button class="btn btn-g" onclick="confirmIssue()">✓ Issue</button>
       <button class="btn" onclick="closeModal('issueModal')">Cancel</button>
@@ -711,6 +715,8 @@ function openQuickIssue(track) {
   const info = document.getElementById('issueItemInfo');
   info.innerHTML = `<strong>${item.desc}</strong> &nbsp;<span class="badge ${item.type==='Tool'?'b-bl':'b-pu'}">${item.type}</span><br>
     Part# <span class="mono">${item.pn}</span> &nbsp;·&nbsp; Track# <span class="mono" style="color:var(--amber2)">${track}</span>`;
+  // show qty field for consumables only
+  document.getElementById('qtyRow').style.display = item.type === 'Consumable' ? 'block' : 'none';
   panel.style.display='block';
   document.getElementById('qi_to').focus();
   panel.scrollIntoView({behavior:'smooth'});
@@ -726,13 +732,11 @@ function confirmQuickIssue() {
   const cls = document.getElementById('qi_class').value.trim();
   const by = document.getElementById('qi_by').value.trim();
   const notes = document.getElementById('qi_notes').value.trim();
+  const qty = parseInt(document.getElementById('qi_qty')?.value) || 1;
   if (!to||!by) return alert('Issued To and Issued By are required');
-  doIssue(currentIssueTrack, to, cls, by, notes);
+  doIssue(currentIssueTrack, to, cls, by, notes, qty);
   closeQuickIssue();
-  document.getElementById('qi_to').value='';
-  document.getElementById('qi_class').value='';
-  document.getElementById('qi_by').value='';
-  document.getElementById('qi_notes').value='';
+  ['qi_to','qi_class','qi_by','qi_notes'].forEach(id=>document.getElementById(id).value='');
 }
 
 // ═══ ISSUE / RETURN ═══
@@ -742,28 +746,45 @@ function confirmIssue() {
   const cls = document.getElementById('m_class').value.trim();
   const by = document.getElementById('m_by').value.trim();
   const notes = document.getElementById('m_notes').value.trim();
+  const qty = parseInt(document.getElementById('m_qty')?.value) || 1;
   if (!trackMap[track]) return alert('Invalid tracking number');
   if (!to||!by) return alert('Issued To and Issued By are required');
-  if (issuanceLog.some(l=>l.track===track&&l.status==='issued')) return alert('This item is already issued!');
-  doIssue(track, to, cls, by, notes);
+  const item = trackMap[track];
+  if (item.type === 'Tool' && issuanceLog.some(l=>l.track===track&&l.status==='issued')) return alert('This item is already issued!');
+  doIssue(track, to, cls, by, notes, qty);
   closeModal('issueModal');
   ['m_track','m_to','m_class','m_by','m_notes'].forEach(id=>document.getElementById(id).value='');
+  if (document.getElementById('m_qty')) document.getElementById('m_qty').value = 1;
   document.getElementById('m_itemInfo').style.display='none';
+  document.getElementById('qtyRow').style.display='none';
 }
 
-function doIssue(track, to, cls, by, notes) {
+function doIssue(track, to, cls, by, notes, qty) {
   const item = trackMap[track];
   const type = item.type;
+  qty = qty || 1;
   const status = type==='Consumable' ? 'consumed' : 'issued';
   issuanceLog.push({
     id: newId(), track, pn: item.pn, desc: item.desc, type,
     issuedTo: to, class: cls, issuedBy: by, notes,
+    qty: type==='Consumable' ? qty : 1,
     issueTime: nowStr(), issueDate: todayStr(),
-    returnTime: null, status
+    returnTime: null, status,
+    cancelDeadline: type==='Consumable' ? Date.now() + (10 * 60 * 1000) : null
   });
   saveState(); renderAll();
-  // show confirmation
   showToast(`✓ Issued: ${item.desc} → ${to}`);
+}
+
+function cancelIssue(id) {
+  if (!confirm('Cancel this issuance?')) return;
+  const idx = issuanceLog.findIndex(l => l.id === id);
+  if (idx === -1) return;
+  const log = issuanceLog[idx];
+  if (!log.cancelDeadline || Date.now() > log.cancelDeadline) return alert('Cancel period expired (10 minutes)');
+  issuanceLog.splice(idx, 1);
+  saveState(); renderAll();
+  showToast('✓ Issuance cancelled');
 }
 
 function openReturnByTrack(track) {
@@ -904,7 +925,9 @@ function renderLog() {
   if (tp) logs = logs.filter(l=>l.type===tp);
 
   document.getElementById('logTbl').innerHTML = logs.length ?
-    logs.map((l,i)=>`<tr>
+    logs.map((l,i)=>{
+      const canCancel = l.cancelDeadline && Date.now() < l.cancelDeadline;
+      return `<tr>
       <td class="t2">${i+1}</td>
       <td class="mono" style="color:var(--amber2)">${l.track}</td>
       <td class="mono t2" style="font-size:11px">${l.pn||'-'}</td>
@@ -913,12 +936,18 @@ function renderLog() {
       <td>${l.issuedTo}</td>
       <td class="mono t2">${l.class||'-'}</td>
       <td class="t2">${l.issuedBy}</td>
+      <td class="mono t2">${l.qty||1}</td>
       <td class="t2" style="font-size:11px">${l.issueTime}</td>
       <td class="t2" style="font-size:11px">${l.returnTime||'-'}</td>
       <td><span class="badge ${l.status==='returned'?'b-gr':l.status==='consumed'?'b-gy':'b-am'}">${l.status}</span></td>
-      <td>${l.status==='issued'?`<button class="btn btn-g btn-sm" onclick="openReturnByTrack('${l.track}')">Return</button>`:'—'}</td>
-    </tr>`).join('') :
-    '<tr><td colspan="12" style="text-align:center;color:var(--text2);padding:20px">No records</td></tr>';
+      <td>
+        ${l.status==='issued'?`<button class="btn btn-g btn-sm" onclick="openReturnByTrack('${l.track}')">Return</button>`:''}
+        ${canCancel?`<button class="btn btn-r btn-sm" onclick="cancelIssue(${l.id})">❌ Cancel</button>`:''}
+        ${!l.status==='issued'&&!canCancel?'—':''}
+      </td>
+    </tr>`;
+    }).join('') :
+    '<tr><td colspan="13" style="text-align:center;color:var(--text2);padding:20px">No records</td></tr>';
 }
 
 function renderMissing() {
@@ -1026,7 +1055,13 @@ function showPage(id) {
   if (id==='alerts') renderAlerts();
 }
 
-function openModal(id) { document.getElementById(id).classList.add('open'); }
+function openModal(id) { 
+  document.getElementById(id).classList.add('open');
+  if (id === 'issueModal') {
+    document.getElementById('qtyRow').style.display = 'none';
+    if (document.getElementById('m_qty')) document.getElementById('m_qty').value = 1;
+  }
+}
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
 
